@@ -34,7 +34,12 @@ with st.sidebar:
         help="Used only in this app session. Do not paste your key into source code or GitHub.",
     )
     model_name = st.text_input("Gemini model", value="gemini-3.8-flash")
-    st.caption("Without a key, use demonstration/manual mode. API availability depends on your Google AI account and model access.")
+    pollinations_key = st.text_input(
+        "Pollinations API key (optional)",
+        type="password",
+        help="Used only for a render request during this session. Never commit API keys to GitHub.",
+    )
+    st.caption("Without Gemini key, image analysis stays in demo/manual mode. Without Pollinations key, use the generated render prompt only.")
     st.divider()
     st.markdown("**Project:** Skill Wallet Capstone")
     st.markdown("**Stack:** Python · Streamlit · Gemini API (optional)")
@@ -59,6 +64,12 @@ def parse_json_response(text):
         return {"model_response": text}
 
 def analyze_image(prompt, uploaded_file):
+    if uploaded_file is None:
+        return {
+            "mode": "not_run",
+            "notice": "Upload an image before requesting image analysis.",
+            "manual_review_required": True,
+        }
     if not api_key:
         return {
             "mode": "demonstration",
@@ -91,7 +102,7 @@ def analyze_image(prompt, uploaded_file):
         }
 
 def image_prompt(domain, extra_rules):
-    if "safety" in domain.lower():
+    if any(term in domain.lower() for term in ("safety", "ppe", "hazard")):
         schema = """
 Return a JSON object with these keys:
 safety_score (integer 0-100, or null if the photo is insufficient),
@@ -146,7 +157,7 @@ with safety_tab:
     hazards_text = st.text_area("Potential hazards observed by reviewer (one per line)", key="hazards_text")
     if st.button("Analyze site safety image", type="primary"):
         prompt = image_prompt(
-            "Review the construction site image for visible PPE and obvious hazards.",
+            "Review construction site safety, PPE, and visible hazards in the construction site image.",
             "Include a ppe_observations object when possible. Mention that absence in an image does not prove an item is absent on site.",
         )
         with st.spinner("Reviewing image or preparing demo result..."):
@@ -157,6 +168,27 @@ with safety_tab:
             "reviewer_reported_hazards": [line.strip() for line in hazards_text.splitlines() if line.strip()],
             "ai_result": result,
         }
+        payload = result.get("result", {}) if isinstance(result, dict) else {}
+        if isinstance(payload, dict):
+            score = payload.get("safety_score")
+            status = payload.get("overall_status")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Preliminary safety score", f"{score}/100" if isinstance(score, (int, float)) else "Not available")
+            c2.metric("Image review status", str(status or result.get("mode", "Not determined")))
+            hazard_list = payload.get("hazards", [])
+            c3.metric("Potential hazards listed", len(hazard_list) if isinstance(hazard_list, list) else 0)
+            if isinstance(hazard_list, list) and hazard_list:
+                st.markdown("**Potential hazards and suggested follow-up**")
+                for item in hazard_list:
+                    if isinstance(item, dict):
+                        st.warning(
+                            f"{item.get('severity', 'Unknown')}: {item.get('hazard', 'Unspecified hazard')} — "
+                            f"{item.get('corrective_remedy', 'Ask the site safety lead to review.')}"
+                        )
+            ppe_findings = payload.get("ppe_detection")
+            if isinstance(ppe_findings, dict) and ppe_findings:
+                st.markdown("**AI PPE observations**")
+                st.json(ppe_findings, expanded=True)
         st.json(result, expanded=True)
         st.success("Safety observations saved to the report. Human review is still required.")
 
@@ -179,6 +211,24 @@ with crack_tab:
             "user_context": crack_notes,
             "ai_result": result,
         }
+        payload = result.get("result", {}) if isinstance(result, dict) else {}
+        if isinstance(payload, dict):
+            c1, c2 = st.columns(2)
+            c1.metric("Observed defect category", str(payload.get("defect_type", "Not determined")))
+            c2.metric("Suggested urgency", str(payload.get("urgency", "Not determined")))
+            width = payload.get("estimated_crack_width_mm")
+            st.metric("Estimated width (mm)", str(width) if width is not None else "Not estimated")
+            for label, key in [
+                ("Possible causes (hypotheses)", "root_causes"),
+                ("Options for engineer review", "recommended_engineering_repairs"),
+                ("Visible observations", "observations"),
+                ("Uncertainty / limitations", "limitations"),
+            ]:
+                values = payload.get(key)
+                if isinstance(values, list) and values:
+                    st.markdown(f"**{label}**")
+                    for value in values:
+                        st.write(f"• {value}")
         st.json(result, expanded=True)
         st.success("Preliminary observations saved. Not an engineering diagnosis.")
 
@@ -189,27 +239,82 @@ with estimate_tab:
     cost_rate = st.number_input("Assumed construction cost per sq ft (INR)", min_value=0, max_value=100000, value=2000, step=100)
     completion = st.slider("Completion percentage", 0, 100, 0)
     city_tier = st.selectbox("Indian city tier", ["Tier 1", "Tier 2", "Tier 3", "Not specified"])
+    market_rate = st.number_input("Assumed local market value per sq ft (INR)", min_value=0, max_value=200000, value=3000, step=100)
+    steel_kg_per_sqft = st.number_input("Planning assumption: steel (kg/sq ft)", min_value=0.0, max_value=100.0, value=4.0, step=0.5)
+    cement_bags_per_sqft = st.number_input("Planning assumption: cement (50 kg bags/sq ft)", min_value=0.0, max_value=10.0, value=0.4, step=0.05)
     total = area_sqft * cost_rate
     incurred = total * completion / 100
     remaining = total - incurred
+    estimated_asset_value = area_sqft * market_rate
+    steel_kg = area_sqft * steel_kg_per_sqft
+    cement_bags = area_sqft * cement_bags_per_sqft
     m1, m2, m3 = st.columns(3)
     m1.metric("Indicative total budget", f"₹{total:,.0f}")
     m2.metric("Indicative incurred cost", f"₹{incurred:,.0f}")
     m3.metric("Indicative remaining budget", f"₹{remaining:,.0f}")
-    st.caption("These calculations use the rate you enter; they are not current market valuation, a quote, or a quantity-surveyor estimate.")
+    st.progress(completion / 100, text=f"Milestone / completion progress: {completion}%")
+    v1, v2, v3 = st.columns(3)
+    v1.metric("Indicative asset value", f"₹{estimated_asset_value / 100000:.2f} lakh" if estimated_asset_value < 10000000 else f"₹{estimated_asset_value / 10000000:.2f} crore")
+    v2.metric("Planning steel quantity", f"{steel_kg:,.0f} kg")
+    v3.metric("Planning cement quantity", f"{cement_bags:,.0f} bags")
+    st.caption("Market value and material quantities are planning estimates based only on your editable assumptions—not verified market data, an engineer's bill of quantities, or a professional valuation.")
     if st.button("Save project estimate"):
         st.session_state.report["project_estimate"] = {
             "structure_type": structure,
             "built_up_area_sq_ft": area_sqft,
-            "assumed_cost_per_sq_ft_inr": cost_rate,
+            "assumed_construction_cost_per_sq_ft_inr": cost_rate,
             "completion_percent": completion,
             "location_tier": city_tier,
+            "assumed_market_value_per_sq_ft_inr": market_rate,
             "indicative_total_budget_inr": total,
             "indicative_cost_incurred_inr": incurred,
             "indicative_remaining_budget_inr": remaining,
-            "assumption": "User-provided rate; not a market quote or professional valuation.",
+            "indicative_asset_value_inr": estimated_asset_value,
+            "planning_steel_kg_per_sq_ft": steel_kg_per_sqft,
+            "indicative_steel_kg": steel_kg,
+            "planning_cement_bags_per_sq_ft": cement_bags_per_sqft,
+            "indicative_cement_bags_50kg": cement_bags,
+            "assumptions_notice": "User-provided assumptions; not a market quote, professional valuation, or verified material schedule.",
         }
         st.success("Estimate saved.")
+
+    st.divider()
+    st.subheader("Conceptual 3D Architectural Render Prompt")
+    render_structure = st.selectbox("Building style", ["Modern residential", "Commercial office", "Industrial shed", "Low-rise apartment", "Sustainable farmhouse"])
+    render_location = st.text_input("Project location / surroundings (optional)", value="Tier 2 Indian city")
+    render_area = st.number_input("Render plot / built-up area (sq ft)", min_value=100, max_value=10000000, value=max(1000, int(area_sqft)), step=100)
+    render_prompt = (
+        f"High-quality conceptual 3D architectural visualization of a {render_structure.lower()} in {render_location or 'India'}, "
+        f"approximate built-up area {render_area} square feet; climate-aware Indian architecture, realistic materials, "
+        "professional daylight render, clear site context, landscaping and access paths, wide three-quarter perspective, "
+        "no text, no watermark. Concept only, not a construction drawing."
+    )
+    st.text_area("Generated image prompt", value=render_prompt, height=110, disabled=True)
+    if st.button("Generate concept image with Pollinations"):
+        if not pollinations_key:
+            st.warning("Enter a Pollinations API key in the sidebar first. The prompt is ready, but no image was requested.")
+        else:
+            try:
+                import requests
+                from urllib.parse import quote
+                image_url = "https://gen.pollinations.ai/image/" + quote(render_prompt, safe="")
+                with st.spinner("Generating conceptual image..."):
+                    response = requests.get(
+                        image_url,
+                        params={"model": "flux", "width": 1024, "height": 768},
+                        headers={"Authorization": f"Bearer {pollinations_key}"},
+                        timeout=120,
+                    )
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+                    if not content_type.startswith("image/"):
+                        raise ValueError("Image service did not return an image. Check the API key and service response.")
+                    st.image(response.content, caption="Conceptual architecture image — not an engineering drawing", use_container_width=True)
+                    st.session_state.report["project_estimate"]["render_prompt"] = render_prompt
+                    st.session_state.report["project_estimate"]["render_model"] = "Pollinations flux"
+                    st.success("Concept image generated.")
+            except Exception as exc:
+                st.error(f"Could not generate the concept image: {exc}")
 
 with weather_tab:
     st.subheader("Daily Site Assistant & Weather-Aware Advisory")
@@ -234,29 +339,40 @@ with weather_tab:
 with assistant_tab:
     st.subheader("Construction Site Assistant")
     st.write("Ask general questions about site planning, PPE, construction documentation, or the app's estimate.")
-    question = st.text_area("Your question", key="assistant_question")
-    if st.button("Ask site assistant"):
-        if api_key and GENAI_AVAILABLE:
-            try:
-                client = genai.Client(api_key=api_key)
-                response = client.models.generate_content(
-                    model=model_name.strip() or "gemini-3.8-flash",
-                    contents=(
+    for chat_item in st.session_state.report["assistant_notes"]:
+        with st.chat_message("user"):
+            st.write(chat_item.get("question", ""))
+        with st.chat_message("assistant"):
+            st.write(chat_item.get("answer", ""))
+    question = st.text_input("Your message", key="assistant_question")
+    if st.button("Send message", type="primary"):
+        if question.strip():
+            if api_key and GENAI_AVAILABLE:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    chat_context = [
                         "You are a cautious construction documentation assistant. Give general information only. "
                         "Do not certify safety or structural integrity, give definitive engineering instructions, or replace a qualified professional. "
-                        "Ask the user to follow site-specific policy and official alerts where relevant.\nQuestion: " + question
-                    ),
+                        "Follow site-specific policy and official alerts. If uncertain, say so."
+                    ]
+                    for old_item in st.session_state.report["assistant_notes"][-8:]:
+                        chat_context.append("User: " + str(old_item.get("question", "")))
+                        chat_context.append("Assistant: " + str(old_item.get("answer", "")))
+                    chat_context.append("User: " + question.strip())
+                    response = client.models.generate_content(
+                        model=model_name.strip() or "gemini-3.8-flash",
+                        contents="\n\n".join(chat_context),
+                    )
+                    answer = response.text or "No text response received."
+                except Exception as exc:
+                    answer = f"AI request failed: {exc}"
+            else:
+                answer = (
+                    "Demo mode: connect a valid Gemini API key in the sidebar for AI responses. "
+                    "For safety-critical decisions, consult the qualified site safety lead or engineer."
                 )
-                answer = response.text or "No text response received."
-            except Exception as exc:
-                answer = f"AI request failed: {exc}"
-        else:
-            answer = (
-                "Demo mode: provide a site-specific question and connect a valid Gemini API key in the sidebar for an AI response. "
-                "For safety-critical decisions, consult the qualified site safety lead or engineer."
-            )
-        st.session_state.report["assistant_notes"].append({"question": question, "answer": answer})
-        st.markdown(answer)
+            st.session_state.report["assistant_notes"].append({"question": question.strip(), "answer": answer})
+            st.rerun()
 
 with report_tab:
     st.subheader("Structured JSON Data Contract")
