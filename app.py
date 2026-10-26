@@ -1,7 +1,17 @@
 import json
+import re
 from datetime import datetime
 
 import streamlit as st
+
+try:
+    from google import genai
+    from google.genai import types
+    GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    types = None
+    GENAI_AVAILABLE = False
 
 st.set_page_config(
     page_title="Construction Intelligence Platform",
@@ -10,141 +20,233 @@ st.set_page_config(
 )
 
 st.title("🏗️ Multimodal Construction Intelligence Platform")
-st.caption("Construction safety observations • Crack observations • Budget estimation • Weather-aware guidance")
+st.caption("AI-assisted construction safety • Crack observations • Cost estimation • Weather-aware guidance")
 st.info(
-    "Prototype/demo mode. Results are based on user inputs and simple calculations; "
-    "this app does not perform verified AI image analysis or fetch live weather."
+    "Capstone prototype. AI findings are preliminary and can be wrong. "
+    "They are not a substitute for a qualified structural engineer, safety officer, or official weather alerts."
 )
 
 with st.sidebar:
-    st.header("Project overview")
-    st.write("**Capstone:** Multimodal Construction Intelligence Platform")
-    st.write("**Mode:** Demonstration")
-    st.caption("Not a substitute for a qualified engineer, safety officer, or official weather alert.")
+    st.header("AI configuration")
+    api_key = st.text_input(
+        "Google Gemini API key (optional)",
+        type="password",
+        help="Used only in this app session. Do not paste your key into source code or GitHub.",
+    )
+    model_name = st.text_input("Gemini model", value="gemini-2.5-flash")
+    st.caption("Without a key, use demonstration/manual mode. API availability depends on your Google AI account and model access.")
+    st.divider()
+    st.markdown("**Project:** Skill Wallet Capstone")
+    st.markdown("**Stack:** Python · Streamlit · Gemini API (optional)")
 
 if "report" not in st.session_state:
     st.session_state.report = {
         "generated_at": None,
-        "ppe_observations": {},
-        "hazards": [],
-        "crack_observation": {},
+        "safety_analysis": {},
+        "crack_analysis": {},
         "project_estimate": {},
         "weather_advisory": {},
+        "assistant_notes": [],
     }
 
-safety_tab, crack_tab, estimate_tab, weather_tab, report_tab = st.tabs(
-    ["Site Safety & PPE", "Crack Observations", "Project Estimator", "Weather Advisory", "Report"]
+def parse_json_response(text):
+    text = text.strip()
+    text = re.sub(r"^\`\`\`(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*\`\`\`$", "", text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"model_response": text}
+
+def analyze_image(prompt, uploaded_file):
+    if not api_key:
+        return {
+            "mode": "demonstration",
+            "notice": "No Gemini API key supplied; no AI image analysis was run.",
+            "manual_review_required": True,
+        }
+    if not GENAI_AVAILABLE:
+        return {
+            "mode": "unavailable",
+            "error": "Google Gen AI SDK is not installed. Install requirements.txt and redeploy.",
+        }
+    try:
+        client = genai.Client(api_key=api_key)
+        contents = [prompt]
+        if uploaded_file is not None:
+            mime = uploaded_file.type or "image/jpeg"
+            contents.append(types.Part.from_bytes(data=uploaded_file.getvalue(), mime_type=mime))
+        response = client.models.generate_content(model=model_name.strip() or "gemini-2.5-flash", contents=contents)
+        return {
+            "mode": "gemini",
+            "model": model_name.strip() or "gemini-2.5-flash",
+            "result": parse_json_response(response.text or ""),
+            "manual_review_required": True,
+        }
+    except Exception as exc:
+        return {
+            "mode": "error",
+            "error": str(exc),
+            "manual_review_required": True,
+        }
+
+def image_prompt(domain, extra_rules):
+    return f"""
+You are assisting with a construction-site documentation prototype.
+Task: {domain}
+Analyze the attached image conservatively. Do not claim certainty when details are unclear.
+Do not certify structural integrity, OSHA compliance, or compliance with Indian construction codes.
+Do not make a final safety-critical decision. Recommend qualified human inspection for potentially dangerous findings.
+Return a concise JSON object with keys:
+summary (string), observations (array of strings), possible_risks (array of objects with risk and severity),
+recommended_next_steps (array of strings), uncertainty_or_limitations (array of strings).
+Use severity values only from Low, Medium, High, Critical, or Unknown. Do not invent details not visible in the image.
+{extra_rules}
+"""
+
+safety_tab, crack_tab, estimate_tab, weather_tab, assistant_tab, report_tab = st.tabs(
+    ["Site Safety & PPE", "Crack Diagnostics", "Project Estimator", "Weather Advisory", "Site Assistant", "JSON Report"]
 )
 
 with safety_tab:
-    st.subheader("Site Safety & PPE Audit")
-    photo = st.file_uploader("Upload a construction-site image", type=["jpg", "jpeg", "png"], key="site_photo")
-    if photo:
-        st.image(photo, caption="Uploaded site image", use_container_width=True)
-    st.warning("No computer-vision model is connected in this version. Use this section to record a human review.")
-    st.markdown("**Reviewer checklist**")
+    st.subheader("Multimodal Site Safety & PPE Audit")
+    safety_photo = st.file_uploader("Upload a construction-site image (JPG/PNG)", type=["jpg", "jpeg", "png"], key="safety_photo")
+    if safety_photo:
+        st.image(safety_photo, caption="Uploaded site image", use_container_width=True)
+    st.write("**Manual PPE checklist**")
     ppe = {}
-    c1, c2 = st.columns(2)
-    checks = [
-        ("Helmet / hard hat", c1),
-        ("High-visibility vest", c2),
-        ("Safety footwear", c1),
-        ("Harness where required", c2),
+    cols = st.columns(2)
+    checklist = [
+        ("Helmet / hard hat", cols[0]),
+        ("High-visibility vest", cols[1]),
+        ("Safety footwear", cols[0]),
+        ("Harness where required", cols[1]),
     ]
-    for label, col in checks:
+    for label, col in checklist:
         with col:
-            ppe[label] = st.selectbox(
-                label,
-                ["Not reviewed", "Observed", "Not observed", "Not applicable"],
-                key="ppe_" + label,
-            )
-    hazards_text = st.text_area("Potential hazards observed (one per line)", key="hazards_input")
-    if st.button("Save safety observations"):
-        st.session_state.report["ppe_observations"] = ppe
-        st.session_state.report["hazards"] = [x.strip() for x in hazards_text.splitlines() if x.strip()]
-        st.success("Safety observations saved.")
+            ppe[label] = st.selectbox(label, ["Not reviewed", "Observed", "Not observed", "Not applicable"], key="ppe_" + label)
+    hazards_text = st.text_area("Potential hazards observed by reviewer (one per line)", key="hazards_text")
+    if st.button("Analyze site safety image", type="primary"):
+        prompt = image_prompt(
+            "Review the construction site image for visible PPE and obvious hazards.",
+            "Include a ppe_observations object when possible. Mention that absence in an image does not prove an item is absent on site.",
+        )
+        with st.spinner("Reviewing image or preparing demo result..."):
+            result = analyze_image(prompt, safety_photo)
+        st.session_state.report["safety_analysis"] = {
+            "image_filename": safety_photo.name if safety_photo else None,
+            "manual_ppe_checklist": ppe,
+            "reviewer_reported_hazards": [line.strip() for line in hazards_text.splitlines() if line.strip()],
+            "ai_result": result,
+        }
+        st.json(result, expanded=True)
+        st.success("Safety observations saved to the report. Human review is still required.")
 
 with crack_tab:
-    st.subheader("Crack Observations")
-    crack_photo = st.file_uploader("Upload wall / concrete photo", type=["jpg", "jpeg", "png"], key="crack_photo")
+    st.subheader("Crack Diagnostics & Structural Integrity (Preliminary)")
+    crack_photo = st.file_uploader("Upload wall/concrete surface image (JPG/PNG)", type=["jpg", "jpeg", "png"], key="crack_photo")
     if crack_photo:
         st.image(crack_photo, caption="Uploaded surface image", use_container_width=True)
-    st.warning("This section records observations only; it does not diagnose structural safety. Seek a qualified engineer's inspection when concerned.")
-    appearance = st.selectbox(
-        "Observed appearance",
-        ["Not classified", "Hairline", "Settlement-like", "Diagonal / shear-like", "Expansion-like", "Spalling / material loss", "Other"],
-    )
-    length_cm = st.number_input("Approximate visible length (cm; optional)", min_value=0.0, value=0.0, step=1.0)
-    notes = st.text_area("Context / notes")
-    concern = st.selectbox(
-        "Concern level (your observation)",
-        ["Not assessed", "Monitor and seek advice", "Prompt professional inspection", "Immediate hazard suspected"],
-    )
-    if st.button("Save crack observation"):
-        st.session_state.report["crack_observation"] = {
-            "observed_appearance": appearance,
-            "approximate_length_cm": length_cm,
-            "notes": notes,
-            "user_selected_concern_level": concern,
+    st.warning("Image-based estimates cannot establish structural safety. For growing, wide, diagonal, leaking, or displaced cracks, consult a qualified structural engineer.")
+    crack_notes = st.text_area("Known context (age of building, recent changes, water ingress, etc.)")
+    if st.button("Analyze crack image", type="primary"):
+        prompt = image_prompt(
+            "Describe visible cracks or surface defects in this concrete/wall image.",
+            "Do not estimate an exact crack width from a photo unless a scale is clearly available. Never prescribe a repair as definitive; state that an engineer must determine the cause and repair.",
+        ) + "\nContext supplied by user: " + (crack_notes or "None supplied")
+        with st.spinner("Reviewing surface image or preparing demo result..."):
+            result = analyze_image(prompt, crack_photo)
+        st.session_state.report["crack_analysis"] = {
+            "image_filename": crack_photo.name if crack_photo else None,
+            "user_context": crack_notes,
+            "ai_result": result,
         }
-        st.success("Crack observations saved.")
+        st.json(result, expanded=True)
+        st.success("Preliminary observations saved. Not an engineering diagnosis.")
 
 with estimate_tab:
-    st.subheader("Preliminary Project Estimator")
+    st.subheader("Planning & Indicative Real Estate/Construction Estimate")
     structure = st.selectbox("Structure type", ["Residential", "Commercial", "Industrial", "Other"])
-    area_sqft = st.number_input("Built-up area (sq ft)", min_value=0, value=1000, step=100)
-    rate = st.number_input("Assumed cost per sq ft (INR)", min_value=0, value=2000, step=100)
+    area_sqft = st.number_input("Built-up area (sq ft)", min_value=0, max_value=10000000, value=1000, step=100)
+    cost_rate = st.number_input("Assumed construction cost per sq ft (INR)", min_value=0, max_value=100000, value=2000, step=100)
     completion = st.slider("Completion percentage", 0, 100, 0)
-    tier = st.selectbox("City tier", ["Tier 1", "Tier 2", "Tier 3", "Not specified"])
-    total = area_sqft * rate
-    spent = total * completion / 100
+    city_tier = st.selectbox("Indian city tier", ["Tier 1", "Tier 2", "Tier 3", "Not specified"])
+    total = area_sqft * cost_rate
+    incurred = total * completion / 100
+    remaining = total - incurred
     m1, m2, m3 = st.columns(3)
-    m1.metric("Indicative total", f"₹{total:,.0f}")
-    m2.metric("Indicative amount incurred", f"₹{spent:,.0f}")
-    m3.metric("Indicative remaining", f"₹{total - spent:,.0f}")
-    st.caption("Cost per sq ft is your assumption, not a verified market quote or professional valuation.")
-    if st.button("Save estimate"):
+    m1.metric("Indicative total budget", f"₹{total:,.0f}")
+    m2.metric("Indicative incurred cost", f"₹{incurred:,.0f}")
+    m3.metric("Indicative remaining budget", f"₹{remaining:,.0f}")
+    st.caption("These calculations use the rate you enter; they are not current market valuation, a quote, or a quantity-surveyor estimate.")
+    if st.button("Save project estimate"):
         st.session_state.report["project_estimate"] = {
             "structure_type": structure,
             "built_up_area_sq_ft": area_sqft,
-            "assumed_cost_per_sq_ft_inr": rate,
+            "assumed_cost_per_sq_ft_inr": cost_rate,
             "completion_percent": completion,
-            "city_tier": tier,
-            "indicative_total_inr": total,
-            "indicative_incurred_inr": spent,
+            "location_tier": city_tier,
+            "indicative_total_budget_inr": total,
+            "indicative_cost_incurred_inr": incurred,
+            "indicative_remaining_budget_inr": remaining,
+            "assumption": "User-provided rate; not a market quote or professional valuation.",
         }
         st.success("Estimate saved.")
 
 with weather_tab:
-    st.subheader("Weather-aware Site Guidance")
-    condition = st.selectbox(
-        "Reported condition",
-        ["Normal", "High wind", "Heavy rain", "Extreme heat", "Lightning / storm", "Unknown"],
-    )
+    st.subheader("Daily Site Assistant & Weather-Aware Advisory")
+    condition = st.selectbox("Reported weather/site condition", ["Normal", "High wind", "Heavy rain", "Extreme heat", "Lightning / storm", "Unknown"])
     guidance = {
-        "Normal": "Follow the approved site safety plan and routine checks.",
-        "High wind": "Follow site rules and equipment limits; pause lifting or work-at-height activities when required.",
-        "Heavy rain": "Review slip risks, excavation stability, drainage, and electrical exposure; stop affected work if unsafe.",
-        "Extreme heat": "Follow the heat-stress plan, including water, rest, shade, and monitoring for illness.",
-        "Lightning / storm": "Suspend exposed outdoor work and follow the site's shelter and emergency procedures.",
-        "Unknown": "Check an official weather source and consult the site safety team before weather-dependent work.",
+        "Normal": "Follow the approved site safety plan, routine inspections, and local forecasts.",
+        "High wind": "Follow site limits and equipment manuals. Suspend crane, lifting, or work-at-height activities when limits are exceeded or site safety staff require it.",
+        "Heavy rain": "Check excavation stability, drainage, slips, and electrical hazards. Stop affected work if conditions are unsafe.",
+        "Extreme heat": "Apply the heat-stress plan, including shade, water, rest breaks, and monitoring for symptoms of heat illness.",
+        "Lightning / storm": "Suspend exposed work and follow the site's shelter, evacuation, and emergency procedures.",
+        "Unknown": "Check an official weather source and consult the site safety lead before weather-dependent work.",
     }
     st.warning(guidance[condition])
-    st.caption("This app does not fetch live weather. Follow official alerts and site-specific emergency procedures.")
+    st.caption("No live weather feed is connected. This general guidance does not replace official alerts or site-specific procedures.")
     if st.button("Save weather advisory"):
         st.session_state.report["weather_advisory"] = {
             "reported_condition": condition,
             "general_guidance": guidance[condition],
         }
-        st.success("Weather guidance saved.")
+        st.success("Weather advisory saved.")
+
+with assistant_tab:
+    st.subheader("Construction Site Assistant")
+    st.write("Ask general questions about site planning, PPE, construction documentation, or the app's estimate.")
+    question = st.text_area("Your question", key="assistant_question")
+    if st.button("Ask site assistant"):
+        if api_key and GENAI_AVAILABLE:
+            try:
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model=model_name.strip() or "gemini-2.5-flash",
+                    contents=(
+                        "You are a cautious construction documentation assistant. Give general information only. "
+                        "Do not certify safety or structural integrity, give definitive engineering instructions, or replace a qualified professional. "
+                        "Ask the user to follow site-specific policy and official alerts where relevant.\nQuestion: " + question
+                    ),
+                )
+                answer = response.text or "No text response received."
+            except Exception as exc:
+                answer = f"AI request failed: {exc}"
+        else:
+            answer = (
+                "Demo mode: provide a site-specific question and connect a valid Gemini API key in the sidebar for an AI response. "
+                "For safety-critical decisions, consult the qualified site safety lead or engineer."
+            )
+        st.session_state.report["assistant_notes"].append({"question": question, "answer": answer})
+        st.markdown(answer)
 
 with report_tab:
-    st.subheader("Export Project Report")
+    st.subheader("Structured JSON Data Contract")
     report = dict(st.session_state.report)
-    report["generated_at"] = datetime.now().isoformat(timespec="seconds")
     report["application"] = "Multimodal Construction Intelligence Platform"
-    report["mode"] = "demonstration"
-    report["disclaimer"] = "User-entered observations and indicative estimates only; not a professional assessment."
+    report["mode"] = "Gemini-enabled when API key is supplied; otherwise demonstration mode"
+    report["generated_at"] = datetime.now().isoformat(timespec="seconds")
+    report["disclaimer"] = "Preliminary documentation only; not a professional engineering, safety, or valuation assessment."
     st.json(report, expanded=False)
     st.download_button(
         "Download JSON report",
@@ -154,4 +256,4 @@ with report_tab:
     )
 
 st.divider()
-st.caption("Skill Wallet Capstone prototype • Built with Streamlit • Demonstration mode")
+st.caption("Skill Wallet Capstone prototype • Python + Streamlit • Optional Gemini multimodal model")
