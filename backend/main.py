@@ -625,6 +625,11 @@ async def unified_ai_query(
             raise ValueError("context must be a JSON object")
     except ValueError:
         raise HTTPException(status_code=422, detail="context_json must be a valid JSON object.")
+    if file is None and feature in {"site_safety", "crack_analysis"}:
+        raise HTTPException(
+            status_code=422,
+            detail="This feature requires an uploaded JPG or PNG image.",
+        )
     if file is not None:
         image_data = await read_image(file)
         if feature not in {"site_safety", "crack_analysis"}:
