@@ -3,15 +3,16 @@ import os
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-load_dotenv()
+# Load secrets from backend/.env when running from the repository root.
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 app = FastAPI(
     title="Multimodal Construction Intelligence API",
-    description="Prototype endpoints for safety observations, crack review, estimates, weather guidance, and a site assistant.",
-    version="0.1.0",
+    description="Prototype APIs for safety image review, crack observations, project estimates, weather guidance, and a site assistant.",
+    version="0.2.0",
 )
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -40,11 +41,11 @@ class WeatherRequest(BaseModel):
 
 def parse_json_response(text: str) -> Dict[str, Any]:
     cleaned = text.strip()
-    if cleaned.startswith("```"):
+    if cleaned.startswith(chr(96) * 3):
         lines = cleaned.splitlines()
         if lines:
             lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
+        if lines and lines[-1].strip() == chr(96) * 3:
             lines = lines[:-1]
         cleaned = "\n".join(lines)
     try:
@@ -65,12 +66,19 @@ async def read_image(file: UploadFile) -> bytes:
     return data
 
 
-def gemini_image_review(image_data: bytes, mime_type: str, prompt: str) -> Dict[str, Any]:
+def gemini_image_review(
+    image_data: bytes,
+    mime_type: str,
+    prompt: str,
+    demo_result: Dict[str, Any],
+) -> Dict[str, Any]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         return {
             "mode": "demo",
-            "notice": "GEMINI_API_KEY is not configured. No AI image analysis was performed.",
+            "ai_analysis_performed": False,
+            "notice": "GEMINI_API_KEY is not configured; the image was accepted but no AI analysis was performed.",
+            "result": demo_result,
             "manual_review_required": True,
         }
 
@@ -85,6 +93,7 @@ def gemini_image_review(image_data: bytes, mime_type: str, prompt: str) -> Dict[
         )
         return {
             "mode": "gemini",
+            "ai_analysis_performed": True,
             "result": parse_json_response(response.text or ""),
             "manual_review_required": True,
         }
@@ -97,12 +106,19 @@ def gemini_image_review(image_data: bytes, mime_type: str, prompt: str) -> Dict[
 
 @app.get("/")
 def root() -> Dict[str, str]:
-    return {"name": "Multimodal Construction Intelligence API", "docs": "/docs", "health": "/health"}
+    return {
+        "name": "Multimodal Construction Intelligence API",
+        "docs": "/docs",
+        "health": "/health",
+    }
 
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "mode": "gemini-enabled" if os.getenv("GEMINI_API_KEY") else "demo"}
+    return {
+        "status": "ok",
+        "mode": "gemini-enabled" if os.getenv("GEMINI_API_KEY") else "demo",
+    }
 
 
 @app.post("/api/estimate")
@@ -127,30 +143,76 @@ def estimate_project(payload: EstimateRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/site-safety")
-async def analyze_site_safety(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_site_safety(
+    file: UploadFile = File(...),
+    context: str = Form(default="", description="Optional text about site context or observed conditions."),
+) -> Dict[str, Any]:
     image_data = await read_image(file)
-    prompt = """
-Review the construction-site image conservatively. Return a JSON object with:
-safety_score (0-100 or null), overall_status, ppe_detection (helmet, high_visibility_vest,
-safety_footwear, safety_harness values Observed/Not observed/Unclear/Not applicable),
-hazards (array of objects with hazard, severity Low/Medium/High/Critical/Unknown, and corrective_remedy),
-observations (array), limitations (array). Do not claim code compliance or certify safety.
-Explain uncertainty and require qualified human review.
+    prompt = f"""
+You are supporting a construction-site documentation prototype. Review the attached construction-site image conservatively.
+Optional user context: {context or "No context supplied."}
+Return valid JSON with the following keys:
+- safety_score: integer 0-100 or null if the photograph is insufficient
+- overall_status: one of "Potential hazards visible", "No obvious hazard visible", "Unable to determine"
+- worker_positioning_and_access: concise observations about visible worker position, access, edges, scaffolding or elevated work
+- ppe_detection: object with helmet, high_visibility_vest, safety_footwear, and safety_harness; each value must be "Observed", "Not observed", "Unclear", or "Not applicable"
+- hazards: array of objects containing hazard, severity ("Low", "Medium", "High", "Critical", or "Unknown"), and corrective_remedy
+- recommended_ppe: array of general PPE considerations based only on visible context
+- safety_guidelines: array of general follow-up checks
+- limitations: array of uncertainty notes
+Do not claim OSHA/IS 456 compliance, certify safety, or make a final safety-critical decision. Absence from one image does not prove an item is absent on site. Require qualified human review.
 """
-    return gemini_image_review(image_data, file.content_type or "image/jpeg", prompt)
+    demo_result = {
+        "safety_score": None,
+        "overall_status": "Unable to determine",
+        "worker_positioning_and_access": "Not assessed in demo mode; no AI vision analysis was run.",
+        "ppe_detection": {
+            "helmet": "Unclear",
+            "high_visibility_vest": "Unclear",
+            "safety_footwear": "Unclear",
+            "safety_harness": "Unclear",
+        },
+        "hazards": [],
+        "recommended_ppe": [],
+        "safety_guidelines": ["Have a qualified site safety reviewer inspect the photograph and site."],
+        "limitations": ["Configure GEMINI_API_KEY to enable AI image analysis.", "This response is a schema fallback, not an image finding."],
+    }
+    return gemini_image_review(image_data, file.content_type or "image/jpeg", prompt, demo_result)
 
 
 @app.post("/api/crack-analysis")
-async def analyze_crack(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_crack(
+    file: UploadFile = File(...),
+    context: str = Form(default="", description="Optional context such as building age, recent movement, or water ingress."),
+) -> Dict[str, Any]:
     image_data = await read_image(file)
-    prompt = """
-Review this wall/concrete image conservatively. Return JSON with defect_type (Hairline, Settlement,
-Structural Shear, Thermal Expansion, Spalling, Other, or Unclear), estimated_crack_width_mm (number or null;
-use null if no visible scale), root_causes (hypotheses array), recommended_engineering_repairs (options for
-a qualified engineer to assess, not instructions), urgency, observations, and limitations. Do not diagnose
-structural safety or claim the structure is safe.
+    prompt = f"""
+You are supporting a construction surface-observation prototype. Review the attached wall/concrete image conservatively.
+Optional user context: {context or "No context supplied."}
+Return valid JSON with these keys:
+- crack_type: one of "Hairline", "Settlement", "Structural Shear", "Thermal Expansion", "Spalling", "Other", or "Unclear"
+- estimated_crack_width_mm: number or null; use null unless a visible reference scale permits a cautious estimate
+- severity_level: one of "Minor", "Moderate", "Severe", or "Unknown"
+- possible_structural_causes: array of clearly labelled hypotheses, not diagnoses
+- potential_risks: array of possible risks with severity ("Low", "Medium", "High", "Critical", or "Unknown")
+- recommended_repair_methods: array of options for a qualified structural engineer to evaluate, not direct repair instructions
+- urgency: one of "Routine review", "Prompt professional inspection", "Immediate hazard suspected", or "Unable to determine"
+- observations: array of visible findings
+- limitations: array of uncertainties
+Do not assert that a structure is safe or diagnose structural integrity from a photograph.
 """
-    return gemini_image_review(image_data, file.content_type or "image/jpeg", prompt)
+    demo_result = {
+        "crack_type": "Unclear",
+        "estimated_crack_width_mm": None,
+        "severity_level": "Unknown",
+        "possible_structural_causes": [],
+        "potential_risks": [],
+        "recommended_repair_methods": [],
+        "urgency": "Unable to determine",
+        "observations": ["No AI image review was run in demo mode."],
+        "limitations": ["Configure GEMINI_API_KEY to enable AI image analysis.", "A photograph alone cannot establish structural integrity."],
+    }
+    return gemini_image_review(image_data, file.content_type or "image/jpeg", prompt, demo_result)
 
 
 @app.post("/api/site-assistant")
@@ -159,7 +221,7 @@ def site_assistant(payload: AssistantRequest) -> Dict[str, Any]:
     if not api_key:
         return {
             "mode": "demo",
-            "answer": "Demo mode: set GROQ_API_KEY in the local backend/.env file for model responses. For safety-critical decisions, consult a qualified site safety lead or engineer.",
+            "answer": "Demo mode: set GROQ_API_KEY in backend/.env for model responses. For safety-critical decisions, consult a qualified site safety lead or engineer.",
         }
 
     try:
