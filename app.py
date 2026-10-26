@@ -56,6 +56,12 @@ if "report" not in st.session_state:
         "assistant_notes": [],
     }
 
+# Ensure hot-reloaded Streamlit sessions have keys added by newer app versions.
+st.session_state.report.setdefault("real_estate_valuation", {})
+st.session_state.report.setdefault("daily_site_plan", {})
+st.session_state.report.setdefault("weather_advisory", {})
+st.session_state.report.setdefault("assistant_notes", [])
+
 def parse_json_response(text):
     text = text.strip()
     text = re.sub(r"^\`\`\`(?:json)?\s*", "", text, flags=re.IGNORECASE)
