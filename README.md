@@ -1,20 +1,23 @@
 # Multimodal Construction Intelligence Platform
 
-A Streamlit capstone prototype for construction-site safety observations, concrete crack observations, preliminary project-cost estimation, weather-aware site guidance, and downloadable JSON reporting.
+A Streamlit capstone prototype for documenting construction-site safety observations, reviewing possible crack/surface defects, estimating indicative project costs, giving general weather-aware guidance, and exporting a structured JSON report.
 
 ## Features
 
-- Upload and view construction-site photographs.
-- Record a reviewer-led PPE checklist and site hazards.
-- Record crack appearance, estimated length, notes, and concern level.
-- Calculate an indicative construction budget from user-provided area and rate assumptions.
-- View general weather-aware safety guidance based on a selected condition.
-- Export saved observations and estimates as a JSON report.
+- Upload site photographs for a multimodal review when a Google Gemini API key is supplied.
+- Manual PPE checklist and reviewer-entered hazard notes.
+- Preliminary image-based descriptions for visible cracks/surface defects, with uncertainty and professional-review warnings.
+- Indicative construction budget calculations based on user-provided area, rate, and completion percentage.
+- General weather-aware guidance based on a selected condition (no live weather feed is connected).
+- A cautious construction Q&A assistant when the optional Gemini connection is configured.
+- Downloadable JSON report data contract.
 
 ## Tech stack
 
-- Python
+- Python 3.10+
 - Streamlit
+- Google Gen AI SDK (optional runtime API use)
+- Pillow
 
 ## Run locally
 
@@ -26,23 +29,25 @@ A Streamlit capstone prototype for construction-site safety observations, concre
    pip install -r requirements.txt
    ```
 
-4. Start the app:
+4. Run the app:
 
    ```bash
    streamlit run app.py
    ```
 
+5. Optional: add a Google Gemini API key in the app's sidebar to enable model-backed image review and assistant responses. The key is entered into a password field and is not part of the repository. Never commit API keys, credentials, or secrets.
+
 ## Deploy on Streamlit Community Cloud
 
 1. Sign in at https://share.streamlit.io/
-2. Choose this GitHub repository and the `main` branch.
-3. Set the main file path to `app.py`.
-4. Deploy and copy the HTTPS app URL.
+2. Select this repository and the `main` branch.
+3. Set **Main file path** to `app.py`.
+4. Deploy. Add a Gemini API key only if needed; for a public demo, use Streamlit Secrets or a runtime password field and never commit the key into source code.
 
 ## Limitations and safety notice
 
-This starter version is a demonstration application. It does not perform verified AI-based image recognition, does not access live weather feeds, and does not provide engineering diagnosis, certified safety inspection, or professional property valuation. PPE and crack information is entered by the user for documentation. Cost outputs are only estimates based on user-supplied assumptions. Always follow site-specific procedures and consult qualified professionals when needed.
+This is a capstone prototype, not a certified construction inspection system. AI may be inaccurate or miss hazards. Image observations cannot establish structural integrity or code compliance. Cost figures are only calculations based on user-provided assumptions, not a market quote, professional valuation, or quantity-surveyor report. The weather section uses general guidance and does not retrieve live weather. Always follow official alerts, site-specific procedures, and qualified professionals' advice.
 
-## Capstone alignment
+## Capstone scope
 
-The app demonstrates a multi-tab UI, image upload, structured observations, budget calculations, weather condition guidance, and JSON report export. Further work may add an authenticated multimodal model, validated engineering datasets, tests, and richer deployment monitoring.
+The app demonstrates multimodal image input, structured findings, construction-specific observations, project-estimate calculations, weather guidance, a Q&A assistant, and JSON export. Production use would require test coverage, access controls, secure secrets management, validated domain datasets, observability, and expert review.
