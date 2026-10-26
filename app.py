@@ -253,22 +253,78 @@ with estimate_tab:
     market_rate = st.number_input("Assumed local market value per sq ft (INR)", min_value=0, max_value=200000, value=3000, step=100)
     steel_kg_per_sqft = st.number_input("Planning assumption: steel (kg/sq ft)", min_value=0.0, max_value=100.0, value=4.0, step=0.5)
     cement_bags_per_sqft = st.number_input("Planning assumption: cement (50 kg bags/sq ft)", min_value=0.0, max_value=10.0, value=0.4, step=0.05)
+    sand_tons_per_sqft = st.number_input("Planning assumption: sand (tons/sq ft)", min_value=0.0, max_value=1.0, value=0.02, step=0.005)
+    aggregate_tons_per_sqft = st.number_input("Planning assumption: aggregate (tons/sq ft)", min_value=0.0, max_value=1.0, value=0.02, step=0.005)
+
+    with st.expander("Optional detailed material rates and phase schedule"):
+        cement_price = st.number_input("Cement price (INR per 50 kg bag)", min_value=0.0, max_value=100000.0, value=0.0, step=10.0, key="planner_cement_price")
+        sand_price = st.number_input("Sand price (INR per ton)", min_value=0.0, max_value=1000000.0, value=0.0, step=100.0, key="planner_sand_price")
+        aggregate_price = st.number_input("Aggregate price (INR per ton)", min_value=0.0, max_value=1000000.0, value=0.0, step=100.0, key="planner_aggregate_price")
+        steel_price = st.number_input("Steel price (INR per kg)", min_value=0.0, max_value=100000.0, value=0.0, step=1.0, key="planner_steel_price")
+        labour_rate = st.number_input("Labour estimate (INR per sq ft)", min_value=0.0, max_value=100000.0, value=0.0, step=50.0, key="planner_labour_rate")
+        finishing_rate = st.number_input("Finishing estimate (INR per sq ft)", min_value=0.0, max_value=100000.0, value=0.0, step=50.0, key="planner_finishing_rate")
+        contingency_percent = st.number_input("Contingency (%)", min_value=0.0, max_value=50.0, value=0.0, step=1.0, key="planner_contingency")
+        duration_weeks = st.number_input("Estimated project duration (weeks)", min_value=1, max_value=520, value=24, step=1, key="planner_duration")
     total = area_sqft * cost_rate
     incurred = total * completion / 100
     remaining = total - incurred
     estimated_asset_value = area_sqft * market_rate
     steel_kg = area_sqft * steel_kg_per_sqft
     cement_bags = area_sqft * cement_bags_per_sqft
+    sand_tons = area_sqft * sand_tons_per_sqft
+    aggregate_tons = area_sqft * aggregate_tons_per_sqft
+    material_costs = {
+        "cement_inr": cement_bags * cement_price,
+        "sand_inr": sand_tons * sand_price,
+        "aggregate_inr": aggregate_tons * aggregate_price,
+        "steel_inr": steel_kg * steel_price,
+    }
+    material_cost_total = sum(material_costs.values())
+    labour_cost_total = area_sqft * labour_rate
+    finishing_cost_total = area_sqft * finishing_rate
+    detailed_subtotal = material_cost_total + labour_cost_total + finishing_cost_total
+    contingency_cost = detailed_subtotal * contingency_percent / 100
+    detailed_total = detailed_subtotal + contingency_cost
     m1, m2, m3 = st.columns(3)
     m1.metric("Indicative total budget", f"₹{total:,.0f}")
     m2.metric("Indicative incurred cost", f"₹{incurred:,.0f}")
     m3.metric("Indicative remaining budget", f"₹{remaining:,.0f}")
     st.progress(completion / 100, text=f"Milestone / completion progress: {completion}%")
-    v1, v2, v3 = st.columns(3)
+    v1, v2, v3, v4 = st.columns(4)
     v1.metric("Indicative asset value", f"₹{estimated_asset_value / 100000:.2f} lakh" if estimated_asset_value < 10000000 else f"₹{estimated_asset_value / 10000000:.2f} crore")
     v2.metric("Planning steel quantity", f"{steel_kg:,.0f} kg")
     v3.metric("Planning cement quantity", f"{cement_bags:,.0f} bags")
-    st.caption("Market value and material quantities are planning estimates based only on your editable assumptions—not verified market data, an engineer's bill of quantities, or a professional valuation.")
+    v4.metric("Sand / aggregate", f"{sand_tons:,.1f} / {aggregate_tons:,.1f} tons")
+    if any([cement_price, sand_price, aggregate_price, steel_price, labour_rate, finishing_rate]):
+        st.markdown("**Optional detailed cost breakdown (based on entered unit rates)**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Material costs", f"₹{material_cost_total:,.0f}")
+        c2.metric("Labour + finishing", f"₹{labour_cost_total + finishing_cost_total:,.0f}")
+        c3.metric("Detailed subtotal + contingency", f"₹{detailed_total:,.0f}")
+        st.json({
+            "material_costs_inr": {key: round(value, 2) for key, value in material_costs.items()},
+            "labour_inr": round(labour_cost_total, 2),
+            "finishing_inr": round(finishing_cost_total, 2),
+            "contingency_inr": round(contingency_cost, 2),
+            "detailed_estimate_inr": round(detailed_total, 2),
+        }, expanded=False)
+    schedule_weights = [
+        ("Planning, permits and site preparation", 0.10),
+        ("Foundation and substructure", 0.20),
+        ("Structure and masonry", 0.35),
+        ("Electrical, plumbing and services", 0.15),
+        ("Finishing, inspection and handover", 0.20),
+    ]
+    phase_rows = []
+    for phase_name, weight in schedule_weights:
+        phase_rows.append({
+            "Phase": phase_name,
+            "Est. weeks": round(duration_weeks * weight, 1),
+            "Progress status": "Complete" if completion >= sum(w for _, w in schedule_weights[:schedule_weights.index((phase_name, weight)) + 1]) * 100 else "Planned / in progress",
+        })
+    st.markdown("**Phase-wise execution schedule (indicative)**")
+    st.table(phase_rows)
+    st.caption("Market value, materials, rates and duration are user-editable assumptions—not verified market data, an engineer's bill of quantities, or a professional valuation.")
     if st.button("Save project estimate"):
         st.session_state.report["project_estimate"] = {
             "structure_type": structure,
@@ -285,6 +341,17 @@ with estimate_tab:
             "indicative_steel_kg": steel_kg,
             "planning_cement_bags_per_sq_ft": cement_bags_per_sqft,
             "indicative_cement_bags_50kg": cement_bags,
+            "planning_sand_tons_per_sq_ft": sand_tons_per_sqft,
+            "indicative_sand_tons": sand_tons,
+            "planning_aggregate_tons_per_sq_ft": aggregate_tons_per_sqft,
+            "indicative_aggregate_tons": aggregate_tons,
+            "detailed_material_costs_inr": {key: round(value, 2) for key, value in material_costs.items()},
+            "detailed_labour_cost_inr": round(labour_cost_total, 2),
+            "detailed_finishing_cost_inr": round(finishing_cost_total, 2),
+            "detailed_contingency_inr": round(contingency_cost, 2),
+            "detailed_total_using_entered_rates_inr": round(detailed_total, 2),
+            "estimated_duration_weeks": duration_weeks,
+            "phase_schedule": phase_rows,
             "assumptions_notice": "User-provided assumptions; not a market quote, professional valuation, or verified material schedule.",
         }
         st.success("Estimate saved.")
