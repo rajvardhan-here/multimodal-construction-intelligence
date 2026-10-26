@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -259,6 +260,6 @@ def test_streamlit_app_renders_in_demo_mode(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     from streamlit.testing.v1 import AppTest
 
-    app_test = AppTest.from_file("app.py", default_timeout=20).run()
+    app_test = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
     assert len(app_test.exception) == 0
     assert any("Multimodal Construction Intelligence Platform" in title.value for title in app_test.title)
