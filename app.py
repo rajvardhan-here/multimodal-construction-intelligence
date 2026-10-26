@@ -33,7 +33,7 @@ with st.sidebar:
         type="password",
         help="Used only in this app session. Do not paste your key into source code or GitHub.",
     )
-    model_name = st.text_input("Gemini model", value="gemini-2.5-flash")
+    model_name = st.text_input("Gemini model", value="gemini-3.8-flash")
     st.caption("Without a key, use demonstration/manual mode. API availability depends on your Google AI account and model access.")
     st.divider()
     st.markdown("**Project:** Skill Wallet Capstone")
@@ -76,10 +76,10 @@ def analyze_image(prompt, uploaded_file):
         if uploaded_file is not None:
             mime = uploaded_file.type or "image/jpeg"
             contents.append(types.Part.from_bytes(data=uploaded_file.getvalue(), mime_type=mime))
-        response = client.models.generate_content(model=model_name.strip() or "gemini-2.5-flash", contents=contents)
+        response = client.models.generate_content(model=model_name.strip() or "gemini-3.8-flash", contents=contents)
         return {
             "mode": "gemini",
-            "model": model_name.strip() or "gemini-2.5-flash",
+            "model": model_name.strip() or "gemini-3.8-flash",
             "result": parse_json_response(response.text or ""),
             "manual_review_required": True,
         }
@@ -91,16 +91,34 @@ def analyze_image(prompt, uploaded_file):
         }
 
 def image_prompt(domain, extra_rules):
+    if "safety" in domain.lower():
+        schema = """
+Return a JSON object with these keys:
+safety_score (integer 0-100, or null if the photo is insufficient),
+overall_status (one of "Potential hazards visible", "No obvious hazard visible", "Unable to determine"),
+ppe_detection (object with helmet, high_visibility_vest, safety_footwear, safety_harness; each value must be "Observed", "Not observed", "Unclear", or "Not applicable"),
+hazards (array of objects, each with hazard, severity [Low/Medium/High/Critical/Unknown], and corrective_remedy),
+observations (array of strings), limitations (array of strings).
+Score only the visible evidence and explain uncertainty. Do not state that the site complies with OSHA or IS 456; this image review cannot certify compliance.
+"""
+    else:
+        schema = """
+Return a JSON object with these keys:
+defect_type (one of Hairline, Settlement, Structural Shear, Thermal Expansion, Spalling, Other, or Unclear),
+estimated_crack_width_mm (number or null; use null unless a scale is clearly visible),
+root_causes (array of possible causes, clearly marked as hypotheses),
+recommended_engineering_repairs (array of options for a qualified engineer to evaluate, not definitive instructions),
+urgency (one of Routine review, Prompt professional inspection, Immediate hazard suspected, or Unable to determine),
+observations (array of strings), limitations (array of strings).
+Do not diagnose structural integrity or claim that a structure is safe.
+"""
     return f"""
-You are assisting with a construction-site documentation prototype.
+You are assisting with a construction-site documentation capstone prototype.
 Task: {domain}
 Analyze the attached image conservatively. Do not claim certainty when details are unclear.
-Do not certify structural integrity, OSHA compliance, or compliance with Indian construction codes.
+Do not certify structural integrity, occupational safety, OSHA compliance, or compliance with Indian construction codes.
 Do not make a final safety-critical decision. Recommend qualified human inspection for potentially dangerous findings.
-Return a concise JSON object with keys:
-summary (string), observations (array of strings), possible_risks (array of objects with risk and severity),
-recommended_next_steps (array of strings), uncertainty_or_limitations (array of strings).
-Use severity values only from Low, Medium, High, Critical, or Unknown. Do not invent details not visible in the image.
+{schema}
 {extra_rules}
 """
 
@@ -222,7 +240,7 @@ with assistant_tab:
             try:
                 client = genai.Client(api_key=api_key)
                 response = client.models.generate_content(
-                    model=model_name.strip() or "gemini-2.5-flash",
+                    model=model_name.strip() or "gemini-3.8-flash",
                     contents=(
                         "You are a cautious construction documentation assistant. Give general information only. "
                         "Do not certify safety or structural integrity, give definitive engineering instructions, or replace a qualified professional. "
