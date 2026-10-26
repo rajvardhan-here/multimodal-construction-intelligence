@@ -398,7 +398,7 @@ with daily_plan_tab:
 
     if st.button("Generate today's site plan", type="primary"):
         activity_l = planned_activity.lower()
-        if any(term in activity_l for term in ("concrete", "slab", "pour")):
+        if any(term in activity_l for term in ("concret", "slab", "pour")):
             tasks = [
                 "Confirm drawings, reinforcement, formwork and inspection approvals.",
                 "Check concrete delivery, access, placement equipment and curing plan.",
@@ -520,7 +520,7 @@ with weather_tab:
     }
     activity_l = planned_weather_activity.lower()
     height_or_lifting = any(term in activity_l for term in ("crane", "lifting", "scaffold", "height"))
-    concrete_excavation_or_electrical = any(term in activity_l for term in ("excavation", "foundation", "concrete", "electrical"))
+    concrete_excavation_or_electrical = any(term in activity_l for term in ("excavation", "foundation", "concret", "electrical"))
     if condition == "Lightning / storm" or (condition == "High wind" and height_or_lifting) or (condition == "Heavy rain" and concrete_excavation_or_electrical):
         recommendation = "NO-GO"
     elif condition == "Unknown":
