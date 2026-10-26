@@ -251,3 +251,14 @@ def test_unified_ai_query_requires_image_for_visual_features():
         data={"feature": "site_safety", "question": "Review PPE", "context_json": "{}"},
     )
     assert response.status_code == 422
+
+
+
+def test_streamlit_app_renders_in_demo_mode(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    from streamlit.testing.v1 import AppTest
+
+    app_test = AppTest.from_file("app.py", default_timeout=20).run()
+    assert len(app_test.exception) == 0
+    assert any("Multimodal Construction Intelligence Platform" in title.value for title in app_test.title)
