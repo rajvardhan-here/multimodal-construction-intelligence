@@ -237,7 +237,7 @@ def gemini_image_review(
 def weather_assessment(condition: str, planned_activity: str) -> Dict[str, Any]:
     activity = planned_activity.lower()
     height_or_lifting = any(term in activity for term in ("crane", "lift", "lifting", "scaffold", "height", "roof", "elevated"))
-    excavation_or_concrete = any(term in activity for term in ("excavat", "trench", "foundation", "concrete", "pour", "slab"))
+    excavation_or_concrete = any(term in activity for term in ("excavat", "trench", "foundation", "concret", "pour", "slab"))
     electrical = any(term in activity for term in ("electrical", "wiring", "power", "cable"))
     risks: List[str] = []
     precautions: List[str] = []
