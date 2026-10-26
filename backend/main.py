@@ -510,7 +510,7 @@ def contextual_groq_response(feature: str, question: str, context: Dict[str, Any
             "content": json.dumps({"question": question, "context": context}, ensure_ascii=False),
         })
         response = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
             messages=messages,
             temperature=0.2,
         )
