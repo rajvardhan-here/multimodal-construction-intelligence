@@ -209,7 +209,7 @@ def gemini_image_review(
 
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             contents=[prompt, types.Part.from_bytes(data=image_data, mime_type=mime_type)],
         )
         raw_result = parse_json_response(response.text or "")
@@ -324,6 +324,13 @@ def build_project_plan(payload: ProjectPlanningRequest) -> Dict[str, Any]:
         })
         current_week += phase_weeks
 
+    cumulative_completion = 0.0
+    completed_phase_count = 0
+    for _, fraction in phases:
+        cumulative_completion += fraction * 100
+        if payload.completion_percent >= cumulative_completion:
+            completed_phase_count += 1
+
     return {
         "project_brief": payload.project_brief,
         "structure_type": payload.structure_type,
@@ -343,9 +350,8 @@ def build_project_plan(payload: ProjectPlanningRequest) -> Dict[str, Any]:
         "timeline": timeline,
         "milestone_progress": {
             "completion_percent": payload.completion_percent,
-            "completed_phase_count_estimate": sum(
-                1 for _, fraction in phases if payload.completion_percent >= sum(f for _, f in phases[:phases.index((_, fraction)) + 1]) * 100
-            ),
+            "completed_phase_count_estimate": completed_phase_count,
+            "total_phases": len(phases),
         },
         "assumptions": [
             "Material quantities use editable user-provided per-square-foot assumptions and are illustrative only.",
