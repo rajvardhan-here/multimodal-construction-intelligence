@@ -50,6 +50,8 @@ if "report" not in st.session_state:
         "safety_analysis": {},
         "crack_analysis": {},
         "project_estimate": {},
+        "real_estate_valuation": {},
+        "daily_site_plan": {},
         "weather_advisory": {},
         "assistant_notes": [],
     }
@@ -133,8 +135,11 @@ Do not make a final safety-critical decision. Recommend qualified human inspecti
 {extra_rules}
 """
 
-safety_tab, crack_tab, estimate_tab, weather_tab, assistant_tab, report_tab = st.tabs(
-    ["Site Safety & PPE", "Crack Diagnostics", "Project Estimator", "Weather Advisory", "Site Assistant", "JSON Report"]
+safety_tab, crack_tab, estimate_tab, valuation_tab, daily_plan_tab, weather_tab, assistant_tab, report_tab = st.tabs(
+    [
+        "Site Safety & PPE", "Crack Diagnostics", "Project Estimator", "Real Estate Valuation",
+        "Daily Site Plan", "Weather Advisory", "Site Assistant", "JSON Report"
+    ]
 )
 
 with safety_tab:
@@ -316,23 +321,224 @@ with estimate_tab:
             except Exception as exc:
                 st.error(f"Could not generate the concept image: {exc}")
 
+with valuation_tab:
+    st.subheader("Real Estate Valuation Engine")
+    st.write("Enter a verified local market rate to calculate an indicative value. The app does not fetch live property prices.")
+    valuation_location = st.text_input("Property location", value="Indore, Madhya Pradesh", key="valuation_location")
+    valuation_type = st.selectbox("Property type", ["Residential", "Commercial", "Industrial", "Land / Plot"], key="valuation_type")
+    valuation_area = st.number_input("Built-up / plot area (sq ft)", min_value=1, max_value=10000000, value=1000, step=100, key="valuation_area")
+    valuation_age = st.number_input("Building age (years)", min_value=0, max_value=500, value=5, step=1, key="valuation_age")
+    valuation_amenities = st.multiselect(
+        "Amenities",
+        ["Parking", "Lift", "Security", "Garden", "Gym", "Pool", "Power backup", "Road access"],
+        key="valuation_amenities",
+    )
+    valuation_rate = st.number_input(
+        "Assumed market rate (INR per sq ft)",
+        min_value=0,
+        max_value=2000000,
+        value=0,
+        step=100,
+        key="valuation_rate",
+        help="Enter a verified local comparable rate; leave at 0 if unknown.",
+    )
+    valuation_rent = st.number_input("Estimated monthly rent (INR; optional)", min_value=0, max_value=100000000, value=0, step=1000, key="valuation_rent")
+    valuation_appreciation = st.number_input("Assumed annual appreciation (%)", min_value=-50.0, max_value=100.0, value=0.0, step=0.5, key="valuation_appreciation")
+    valuation_years = st.slider("Projection horizon (years)", min_value=1, max_value=30, value=5, key="valuation_years")
+
+    property_value = valuation_area * valuation_rate if valuation_rate > 0 else None
+    annual_rent = valuation_rent * 12 if valuation_rent > 0 else None
+    rental_yield = (annual_rent / property_value * 100) if property_value and annual_rent is not None else None
+    projected_value = property_value * ((1 + valuation_appreciation / 100) ** valuation_years) if property_value is not None else None
+
+    v1, v2, v3 = st.columns(3)
+    v1.metric("Indicative market value", f"₹{property_value:,.0f}" if property_value is not None else "Rate required")
+    v2.metric("Gross annual rent", f"₹{annual_rent:,.0f}" if annual_rent is not None else "Not supplied")
+    v3.metric("Gross rental yield", f"{rental_yield:.2f}%" if rental_yield is not None else "N/A")
+    st.metric(
+        f"Illustrative value in {valuation_years} years",
+        f"₹{projected_value:,.0f}" if projected_value is not None else "Rate required",
+    )
+    st.caption("Valuation and appreciation are simple calculations from your own assumptions—not an official market valuation, investment advice, or guaranteed forecast.")
+    if st.button("Save valuation to report"):
+        st.session_state.report["real_estate_valuation"] = {
+            "property_location": valuation_location,
+            "property_type": valuation_type,
+            "built_up_area_sq_ft": valuation_area,
+            "building_age_years": valuation_age,
+            "amenities": valuation_amenities,
+            "assumed_market_rate_per_sq_ft_inr": valuation_rate if valuation_rate > 0 else None,
+            "estimated_market_value_inr": property_value,
+            "estimated_monthly_rent_inr": valuation_rent if valuation_rent > 0 else None,
+            "estimated_annual_rent_inr": annual_rent,
+            "gross_rental_yield_percent": round(rental_yield, 2) if rental_yield is not None else None,
+            "assumed_annual_appreciation_percent": valuation_appreciation,
+            "projection_years": valuation_years,
+            "projected_value_inr": round(projected_value, 2) if projected_value is not None else None,
+            "notice": "User-entered assumptions only; verify with local market comparables and a qualified professional.",
+        }
+        st.success("Valuation saved to JSON report.")
+
+
+with daily_plan_tab:
+    st.subheader("Daily Site Assistant — Work Plan")
+    activity_options = [
+        "General construction", "Concreting", "Excavation / foundation",
+        "Crane lifting", "Scaffolding / work at height", "Masonry", "Electrical work"
+    ]
+    planned_activity = st.selectbox("Planned activity", activity_options, key="daily_activity")
+    labour_count = st.number_input("Crew size", min_value=0, max_value=10000, value=10, step=1, key="daily_labour")
+    shift_hours = st.slider("Shift duration (hours)", min_value=1, max_value=24, value=8, key="daily_shift")
+    site_condition = st.selectbox(
+        "Reported site/weather condition",
+        ["normal", "high wind", "heavy rain", "extreme heat", "lightning", "unknown"],
+        key="daily_condition",
+    )
+    site_notes = st.text_area("Site notes / constraints", key="daily_site_notes")
+
+    if st.button("Generate today's site plan", type="primary"):
+        activity_l = planned_activity.lower()
+        if any(term in activity_l for term in ("concrete", "slab", "pour")):
+            tasks = [
+                "Confirm drawings, reinforcement, formwork and inspection approvals.",
+                "Check concrete delivery, access, placement equipment and curing plan.",
+                "Record pour timings and required quality checks.",
+            ]
+            resources = ["Approved concrete mix", "PPE", "Placement/compaction equipment", "Curing materials"]
+        elif any(term in activity_l for term in ("excavat", "foundation")):
+            tasks = [
+                "Verify service locations, permits and excavation safety plan.",
+                "Inspect excavation stability, protective systems and access before entry.",
+                "Keep spoil and equipment clear of excavation edges; reassess after rain.",
+            ]
+            resources = ["Barricades/signage", "PPE", "Safe access equipment", "Excavation inspection checklist"]
+        elif any(term in activity_l for term in ("crane", "lifting", "scaffold", "height")):
+            tasks = [
+                "Review lift/work-at-height plan and exclusion zone.",
+                "Inspect lifting gear, anchorage, access and fall protection.",
+                "Stop work if weather, equipment limits or site conditions are unsafe.",
+            ]
+            resources = ["Approved lifting/height-work equipment", "Inspection records", "PPE", "Barricades"]
+        else:
+            tasks = [
+                "Conduct site briefing and verify the approved work sequence.",
+                "Inspect work area, access, tools, materials and permits.",
+                "Assign responsibilities and record changed hazards or constraints.",
+            ]
+            resources = ["Task-specific materials", "PPE", "Tool/equipment checklist", "Daily permits where required"]
+
+        has_lifting = any(term in activity_l for term in ("crane", "lifting", "scaffold", "height"))
+        has_concrete_excavation_or_electrical = any(term in activity_l for term in ("concrete", "slab", "pour", "excavat", "foundation", "electrical"))
+        if site_condition == "lightning":
+            decision = "NO-GO"
+            risks = ["Lightning exposure for outdoor or elevated work."]
+            precautions = ["Suspend exposed outdoor work and follow the site's shelter procedure."]
+        elif site_condition == "high wind" and has_lifting:
+            decision = "NO-GO"
+            risks = ["Wind-sensitive lifting or elevated activity."]
+            precautions = ["Suspend the task until site-specific limits and competent-person clearance permit restart."]
+        elif site_condition == "heavy rain" and has_concrete_excavation_or_electrical:
+            decision = "NO-GO"
+            risks = ["Rain may affect excavation stability, concrete work or electrical safety."]
+            precautions = ["Pause affected work until the site is assessed and conditions are controlled."]
+        elif site_condition == "unknown":
+            decision = "HOLD FOR VERIFICATION"
+            risks = ["Current conditions are not verified."]
+            precautions = ["Check official weather information and consult the site safety lead."]
+        elif site_condition in ("high wind", "heavy rain", "extreme heat"):
+            decision = "GO WITH CAUTION"
+            risks = ["Weather-related conditions may affect site safety."]
+            precautions = ["Review controls, site-specific procedures and official alerts before work."]
+        else:
+            decision = "GO SUBJECT TO SITE CHECKS"
+            risks = []
+            precautions = ["Follow the approved method statement and routine site checks."]
+
+        checks = [
+            "Confirm task-specific PPE and safe access.",
+            "Check housekeeping, emergency access and communications.",
+            "Brief the crew on hazards, controls and stop-work escalation.",
+        ]
+        if site_condition == "extreme heat":
+            checks.append("Provide water, shade, rest breaks and heat-illness monitoring.")
+        if site_condition in ("heavy rain", "lightning"):
+            checks.append("Verify conditions before restart; follow official alerts.")
+        plan = {
+            "planned_activity": planned_activity,
+            "crew_size": labour_count,
+            "shift_hours": shift_hours,
+            "site_condition": site_condition,
+            "execution_recommendation": decision,
+            "tasks": tasks,
+            "required_materials_and_equipment": resources,
+            "safety_checks": checks,
+            "potential_risk_alerts": risks,
+            "precautions": precautions,
+            "site_notes": site_notes,
+            "limitations": ["Planning aid only; confirm project drawings, permits, method statements and competent-person instructions."],
+        }
+        st.session_state.report["daily_site_plan"] = plan
+        st.success(f"Daily plan generated — {decision}")
+
+    saved_plan = st.session_state.report.get("daily_site_plan", {})
+    if saved_plan:
+        st.subheader("Generated plan")
+        st.metric("Execution recommendation", saved_plan.get("execution_recommendation", "Not generated"))
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Tasks**")
+            for item in saved_plan.get("tasks", []):
+                st.write(f"• {item}")
+            st.markdown("**Required materials / equipment**")
+            for item in saved_plan.get("required_materials_and_equipment", []):
+                st.write(f"• {item}")
+        with right:
+            st.markdown("**Safety checks**")
+            for item in saved_plan.get("safety_checks", []):
+                st.write(f"• {item}")
+            st.markdown("**Risk alerts and precautions**")
+            for item in saved_plan.get("potential_risk_alerts", []) + saved_plan.get("precautions", []):
+                st.warning(item)
+        st.caption("This is a rules-based draft, not a certified site work permit or a live weather forecast.")
+
+
 with weather_tab:
-    st.subheader("Daily Site Assistant & Weather-Aware Advisory")
+    st.subheader("Weather-Aware Construction Advisory")
     condition = st.selectbox("Reported weather/site condition", ["Normal", "High wind", "Heavy rain", "Extreme heat", "Lightning / storm", "Unknown"])
+    planned_weather_activity = st.selectbox(
+        "Weather-sensitive planned activity",
+        ["General site work", "Crane lifting", "Scaffolding / work at height", "Excavation / foundation", "Concrete pouring", "Electrical work"],
+        key="weather_activity",
+    )
     guidance = {
         "Normal": "Follow the approved site safety plan, routine inspections, and local forecasts.",
-        "High wind": "Follow site limits and equipment manuals. Suspend crane, lifting, or work-at-height activities when limits are exceeded or site safety staff require it.",
-        "Heavy rain": "Check excavation stability, drainage, slips, and electrical hazards. Stop affected work if conditions are unsafe.",
-        "Extreme heat": "Apply the heat-stress plan, including shade, water, rest breaks, and monitoring for symptoms of heat illness.",
-        "Lightning / storm": "Suspend exposed work and follow the site's shelter, evacuation, and emergency procedures.",
-        "Unknown": "Check an official weather source and consult the site safety lead before weather-dependent work.",
+        "High wind": "Check equipment operating limits, secure loose materials and suspend lifting or elevated work when site rules require it.",
+        "Heavy rain": "Check excavation stability, drainage, slips and electrical exposure; stop affected work if unsafe.",
+        "Extreme heat": "Apply the heat-stress plan, including water, shade, rest breaks and illness monitoring.",
+        "Lightning / storm": "Suspend exposed outdoor work and follow shelter, evacuation and emergency procedures.",
+        "Unknown": "Verify conditions through an official weather source and consult the site safety lead.",
     }
+    activity_l = planned_weather_activity.lower()
+    height_or_lifting = any(term in activity_l for term in ("crane", "lifting", "scaffold", "height"))
+    concrete_excavation_or_electrical = any(term in activity_l for term in ("excavation", "foundation", "concrete", "electrical"))
+    if condition == "Lightning / storm" or (condition == "High wind" and height_or_lifting) or (condition == "Heavy rain" and concrete_excavation_or_electrical):
+        recommendation = "NO-GO"
+    elif condition == "Unknown":
+        recommendation = "HOLD FOR VERIFICATION"
+    elif condition in ("High wind", "Heavy rain", "Extreme heat"):
+        recommendation = "GO WITH CAUTION"
+    else:
+        recommendation = "GO SUBJECT TO SITE CHECKS"
+    st.metric("Preliminary recommendation", recommendation)
     st.warning(guidance[condition])
-    st.caption("No live weather feed is connected. This general guidance does not replace official alerts or site-specific procedures.")
+    st.caption("Condition is user-reported; no live weather feed is connected. Follow official alerts and site-specific stop-work authority.")
     if st.button("Save weather advisory"):
         st.session_state.report["weather_advisory"] = {
             "reported_condition": condition,
+            "planned_activity": planned_weather_activity,
+            "recommendation": recommendation,
             "general_guidance": guidance[condition],
+            "live_weather_connected": False,
         }
         st.success("Weather advisory saved.")
 
