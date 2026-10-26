@@ -225,3 +225,29 @@ def test_image_endpoint_rejects_wrong_media_type():
 def test_image_endpoint_rejects_missing_file():
     response = client.post("/api/site-safety", data={"context": "no image"})
     assert response.status_code == 422
+
+
+
+def test_unified_ai_query_returns_feature_context_in_demo_mode(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    response = client.post(
+        "/api/ai/query",
+        data={
+            "feature": "real_estate_valuation",
+            "question": "Summarize the limits in this estimate",
+            "context_json": '{"area_sq_ft": 1000, "market_rate": null}',
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["feature"] == "real_estate_valuation"
+    assert payload["mode"] == "demo"
+    assert payload["result"]["limitations"]
+
+
+def test_unified_ai_query_requires_image_for_visual_features():
+    response = client.post(
+        "/api/ai/query",
+        data={"feature": "site_safety", "question": "Review PPE", "context_json": "{}"},
+    )
+    assert response.status_code == 422
